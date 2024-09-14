@@ -7,6 +7,24 @@ const (
 	SYM_TYPE_FUNC
 )
 
+func (t SymbolType) String() string {
+	switch t {
+	case SYM_TYPE_FUNC:
+		return "Function"
+	default:
+		return "Unknown"
+	}
+}
+
+func (t SymbolType) GoString() string {
+	switch t {
+	case SYM_TYPE_FUNC:
+		return "SYM_TYPE_FUNC"
+	default:
+		return "SYM_TYPE_UKN"
+	}
+}
+
 type Symbol struct {
 	Type SymbolType
 	Name string
@@ -42,12 +60,52 @@ const (
 	BIN_TYPE_PE
 )
 
+func (t BinaryType) String() string {
+	switch t {
+	case BIN_TYPE_ELF:
+		return "ELF"
+	case BIN_TYPE_PE:
+		return "PE"
+	default:
+		return "auto"
+	}
+}
+
+func (t BinaryType) GoString() string {
+	switch t {
+	case BIN_TYPE_ELF:
+		return "BIN_TYPE_ELF"
+	case BIN_TYPE_PE:
+		return "BIN_TYPE_PE"
+	default:
+		return "BIN_TYPE_AUTO"
+	}
+}
+
 type BinaryArch int
 
 const (
 	ARCH_NONE BinaryArch = iota
 	ARCH_X86
 )
+
+func (t BinaryArch) String() string {
+	switch t {
+	case ARCH_X86:
+		return "x86"
+	default:
+		return "none"
+	}
+}
+
+func (t BinaryArch) GoString() string {
+	switch t {
+	case ARCH_X86:
+		return "ARCH_X86"
+	default:
+		return "ARCH_NONE"
+	}
+}
 
 type Binary struct {
 	Filename string
