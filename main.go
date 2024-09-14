@@ -34,11 +34,15 @@ import (
 	"os"
 )
 
+// Load the data from a binary file into our Binary type
+//
+// Practical Binary Analysis, Ch.4, p.75
 func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 	bfd := OpenBfd(fname)
 	if bfd == nil {
 		return errors.New("could not open binary")
 	}
+	// bfd_close handles freeing the pointer
 	defer C.bfd_close(bfd)
 
 	bin.Filename = fname
@@ -71,10 +75,25 @@ func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 		return errors.New("unsupported architecture")
 	}
 
+	loadSymbols()
+	loadDynsym()
+
+	loadSections()
 
 	return nil
 }
 
+func loadSymbols() {
+
+}
+
+func loadDynsym() {}
+
+func loadSections() {}
+
+// Open a binary file using libbfd and return a pointer to a bfd struct.
+//
+// This function uses our custom C code to implement its workings.
 func OpenBfd(fname string) *C.bfd {
 	return C.open_bfd(fname)
 }
@@ -83,6 +102,7 @@ func UnloadBinary(bin *Binary) {
 	// TODO figure out if this needs to do anything
 }
 
+// Initialize libbfd when the program starts.
 func init() {
 	C.bfd_init()
 }
