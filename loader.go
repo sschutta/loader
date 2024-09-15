@@ -1,4 +1,4 @@
-package main
+package loader
 
 /*
 #cgo LDFLAGS: -lbfd
@@ -25,13 +25,44 @@ bfd* open_bfd(_GoString_ fname) {
    }
    return bfd_h;
 }
+
+asymbol** get_symtab_bfd(bfd *bfd_h, long *nsyms) {
+   long n;
+   asymbol **bfd_symtab;
+
+   bfd_symtab = NULL;
+
+   n = bfd_get_symtab_upper_bound(bfd_h);
+   if (n < 0) {
+       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
+       return NULL;
+   } else if (n == 0) {
+       fprintf(stderr, "no symbol table\n");
+       return NULL;
+   }
+
+   bfd_symtab = (asymbol**)malloc(n);
+   if (!bfd_symtab) {
+       fprintf(stderr, "out of memory\n");
+       return NULL;
+   }
+
+   *nsyms = bfd_canonicalize_symtab(bfd_h, bfd_symtab);
+   if (*nsyms < 0) {
+       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
+       free(bfd_symtab);
+       return NULL;
+   }
+
+   return bfd_symtab;
+}
 */
 import "C"
 
 import (
 	"errors"
 	"fmt"
-	"os"
+	"unsafe"
 )
 
 // Load the data from a binary file into our Binary type
@@ -75,7 +106,9 @@ func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 		return errors.New("unsupported architecture")
 	}
 
-	loadSymbols()
+	if err := loadSymbols(bfd, bin); err != nil {
+		fmt.Printf("error loading symtab: %v", err)
+	}
 	loadDynsym()
 
 	loadSections()
@@ -83,8 +116,29 @@ func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 	return nil
 }
 
-func loadSymbols() {
+func loadSymbols(bfd *C.bfd, bin *Binary) error {
+	var nsyms C.long
+	bfdSymtab := C.get_symtab_bfd(bfd, &nsyms)
+	if bfdSymtab == nil {
+		return errors.New("could not process symbol table")
+	}
+	defer C.free(unsafe.Pointer(bfdSymtab))
 
+	// https://go.dev/wiki/cgo
+	symtab := unsafe.Slice(bfdSymtab, nsyms)
+
+	for _, s := range symtab {
+		if s.flags & C.BSF_FUNCTION == C.BSF_FUNCTION {
+			bin.Symbols = append(bin.Symbols, Symbol{
+				Type: SYM_TYPE_FUNC,
+				Name: C.GoString(s.name),
+				Addr: uint64(C.bfd_asymbol_value(s)),
+			})
+		}
+	}
+
+
+	return nil
 }
 
 func loadDynsym() {}
@@ -105,15 +159,4 @@ func UnloadBinary(bin *Binary) {
 // Initialize libbfd when the program starts.
 func init() {
 	C.bfd_init()
-}
-
-func main() {
-	fmt.Println("it compiles")
-	fname := os.Args[1]
-	bin := new(Binary)
-	if err := LoadBinary(fname, bin, BIN_TYPE_AUTO); err != nil {
-		fmt.Printf("could not load binary: %v\n", err)
-		return
-	}
-	fmt.Printf("%#v\n", bin)
 }
