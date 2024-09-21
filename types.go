@@ -1,5 +1,7 @@
 package loader
 
+import "unsafe"
+
 type SymbolType int
 
 const (
@@ -10,9 +12,9 @@ const (
 func (t SymbolType) String() string {
 	switch t {
 	case SYM_TYPE_FUNC:
-		return "Function"
+		return "FUNC"
 	default:
-		return "Unknown"
+		return "UKN"
 	}
 }
 
@@ -39,13 +41,36 @@ const (
 	SEC_TYPE_DATA
 )
 
+func (t SectionType) String() string {
+	switch t {
+	case SEC_TYPE_CODE:
+		return "CODE"
+	case SEC_TYPE_DATA:
+		return "DATA"
+	default:
+		return "NONE"
+	}
+}
+
+func (t SectionType) GoString() string {
+	switch t {
+	case SEC_TYPE_CODE:
+		return "SEC_TYPE_CODE"
+	case SEC_TYPE_DATA:
+		return "SEC_TYPE_DATA"
+	default:
+		return "SEC_TYPE_NONE"
+	}
+}
+
 type Section struct {
-	Binary *Binary
-	Name   string
-	Type   SectionType
-	Vma    uint64
-	Size   uint64
-	Bytes  []uint8
+	Binary   *Binary
+	Name     string
+	Type     SectionType
+	Vma      uint64
+	Size     uint64
+	Bytes    []uint8
+	BytesPtr unsafe.Pointer
 }
 
 func (s *Section) Contains(addr uint64) bool {
@@ -67,7 +92,7 @@ func (t BinaryType) String() string {
 	case BIN_TYPE_PE:
 		return "PE"
 	default:
-		return "auto"
+		return "AUTO"
 	}
 }
 
@@ -94,7 +119,7 @@ func (t BinaryArch) String() string {
 	case ARCH_X86:
 		return "x86"
 	default:
-		return "none"
+		return "NONE"
 	}
 }
 

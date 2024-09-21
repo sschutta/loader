@@ -4,6 +4,7 @@ package loader
 #cgo LDFLAGS: -lbfd
 
 #include <bfd.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -56,6 +57,19 @@ asymbol** get_symtab_bfd(bfd *bfd_h, long *nsyms) {
 
    return bfd_symtab;
 }
+
+long dynsym_upper_bound_bfd(bfd *bfd_h) {
+   return bfd_get_symtab_upper_bound(bfd_h);
+}
+
+long canonicalize_dynsym_bfd(bfd *bfd_h, asymbol **bfd_dynsym) {
+   return bfd_canonicalize_symtab(bfd_h, bfd_dynsym);
+}
+
+flagword get_section_flags_bfd(asection *bfd_sec) {
+   return bfd_sec->flags;
+}
+
 */
 import "C"
 
@@ -107,11 +121,16 @@ func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 	}
 
 	if err := loadSymbols(bfd, bin); err != nil {
-		fmt.Printf("error loading symtab: %v", err)
+		fmt.Printf("error loading symtab: %v\n", err)
 	}
-	loadDynsym()
 
-	loadSections()
+	if err := loadDynsym(bfd, bin); err != nil {
+		fmt.Printf("error loading dynsym: %v\n", err)
+	}
+
+	if err := loadSections(bfd, bin); err != nil {
+		fmt.Printf("error loading sections: %v\n", err)
+	}
 
 	return nil
 }
@@ -128,7 +147,7 @@ func loadSymbols(bfd *C.bfd, bin *Binary) error {
 	symtab := unsafe.Slice(bfdSymtab, nsyms)
 
 	for _, s := range symtab {
-		if s.flags & C.BSF_FUNCTION == C.BSF_FUNCTION {
+		if s.flags&C.BSF_FUNCTION == C.BSF_FUNCTION {
 			bin.Symbols = append(bin.Symbols, Symbol{
 				Type: SYM_TYPE_FUNC,
 				Name: C.GoString(s.name),
@@ -137,13 +156,93 @@ func loadSymbols(bfd *C.bfd, bin *Binary) error {
 		}
 	}
 
+	return nil
+}
+
+func loadDynsym(bfd *C.bfd, bin *Binary) error {
+	var n, nsyms C.long
+	var bfdDynsym **C.asymbol
+
+	n = C.dynsym_upper_bound_bfd(bfd)
+	if n < 0 {
+		errmsg := C.GoString(C.bfd_errmsg(C.bfd_get_error()))
+		return fmt.Errorf("failed to read dynamic symtab (%s)", errmsg)
+	}
+
+	if n == 0 {
+		// not an error, just no symbols
+		return nil
+	}
+
+	bfdDynsym = (**C.asymbol)(C.malloc(C.size_t(n)))
+	if bfdDynsym == nil {
+		return errors.New("out of memory")
+	}
+	defer C.free(unsafe.Pointer(bfdDynsym))
+
+	nsyms = C.canonicalize_dynsym_bfd(bfd, bfdDynsym)
+	if nsyms < 0 {
+		errmsg := C.GoString(C.bfd_errmsg(C.bfd_get_error()))
+		return fmt.Errorf("failed to read dynamic symtab (%s)", errmsg)
+	}
+
+	dynsym := unsafe.Slice(bfdDynsym, nsyms)
+
+	for _, s := range dynsym {
+		if s.flags&C.BSF_FUNCTION == C.BSF_FUNCTION {
+			bin.Symbols = append(bin.Symbols, Symbol{
+				Type: SYM_TYPE_FUNC,
+				Name: C.GoString(s.name),
+				Addr: uint64(C.bfd_asymbol_value(s)),
+			})
+		}
+	}
 
 	return nil
 }
 
-func loadDynsym() {}
+func loadSections(bfd *C.bfd, bin *Binary) error {
+	for bfdSec := bfd.sections; bfdSec != nil; bfdSec = bfdSec.next {
+		bfdFlags := C.get_section_flags_bfd(bfdSec)
+		secType := SEC_TYPE_NONE
+		switch {
+		case bfdFlags&C.SEC_CODE == C.SEC_CODE:
+			secType = SEC_TYPE_CODE
+		case bfdFlags&C.SEC_DATA == C.SEC_DATA:
+			secType = SEC_TYPE_DATA
+		default:
+			continue
+		}
 
-func loadSections() {}
+		vma := C.bfd_section_vma(bfdSec)
+		size := C.bfd_section_size(bfdSec)
+		secname := C.bfd_section_name(bfdSec)
+		secName := C.GoString(secname)
+
+		if secName == "" {
+			secName = "<unnamed>"
+		}
+
+		var bytes = C.malloc(size)
+
+		if success := C.bfd_get_section_contents(bfd, bfdSec, bytes, 0, size); success == C.false {
+			errmsg := C.GoString(C.bfd_errmsg(C.bfd_get_error()))
+			return fmt.Errorf("could not get section contents: %v", errmsg)
+		}
+
+		bin.Sections = append(bin.Sections, Section{
+			Binary:   bin,
+			Name:     secName,
+			Type:     secType,
+			Vma:      uint64(vma),
+			Size:     uint64(size),
+			Bytes:    C.GoBytes(bytes, C.int(size)),
+			BytesPtr: bytes,
+		})
+	}
+
+	return nil
+}
 
 // Open a binary file using libbfd and return a pointer to a bfd struct.
 //
@@ -153,7 +252,9 @@ func OpenBfd(fname string) *C.bfd {
 }
 
 func UnloadBinary(bin *Binary) {
-	// TODO figure out if this needs to do anything
+	for _, sec := range bin.Sections {
+		C.free(sec.BytesPtr)
+	}
 }
 
 // Initialize libbfd when the program starts.
