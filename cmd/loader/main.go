@@ -5,7 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/stuart-schutta-dev/loader"
+	"github.com/sschutta/loader"
 )
 
 func main() {
