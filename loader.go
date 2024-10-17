@@ -27,37 +27,6 @@ bfd* open_bfd(_GoString_ fname) {
    return bfd_h;
 }
 
-asymbol** get_symtab_bfd(bfd *bfd_h, long *nsyms) {
-   long n;
-   asymbol **bfd_symtab;
-
-   bfd_symtab = NULL;
-
-   n = bfd_get_symtab_upper_bound(bfd_h);
-   if (n < 0) {
-       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
-       return NULL;
-   } else if (n == 0) {
-       fprintf(stderr, "no symbol table\n");
-       return NULL;
-   }
-
-   bfd_symtab = (asymbol**)malloc(n);
-   if (!bfd_symtab) {
-       fprintf(stderr, "out of memory\n");
-       return NULL;
-   }
-
-   *nsyms = bfd_canonicalize_symtab(bfd_h, bfd_symtab);
-   if (*nsyms < 0) {
-       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
-       free(bfd_symtab);
-       return NULL;
-   }
-
-   return bfd_symtab;
-}
-
 long dynsym_upper_bound_bfd(bfd *bfd_h) {
    return bfd_get_symtab_upper_bound(bfd_h);
 }
@@ -130,30 +99,6 @@ func LoadBinary(fname string, bin *Binary, t BinaryType) error {
 
 	if err := loadSections(bfd, bin); err != nil {
 		fmt.Printf("error loading sections: %v\n", err)
-	}
-
-	return nil
-}
-
-func loadSymbols(bfd *C.bfd, bin *Binary) error {
-	var nsyms C.long
-	bfdSymtab := C.get_symtab_bfd(bfd, &nsyms)
-	if bfdSymtab == nil {
-		return errors.New("could not process symbol table")
-	}
-	defer C.free(unsafe.Pointer(bfdSymtab))
-
-	// https://go.dev/wiki/cgo
-	symtab := unsafe.Slice(bfdSymtab, nsyms)
-
-	for _, s := range symtab {
-		if s.flags&C.BSF_FUNCTION == C.BSF_FUNCTION {
-			bin.Symbols = append(bin.Symbols, Symbol{
-				Type: SYM_TYPE_FUNC,
-				Name: C.GoString(s.name),
-				Addr: uint64(C.bfd_asymbol_value(s)),
-			})
-		}
 	}
 
 	return nil
