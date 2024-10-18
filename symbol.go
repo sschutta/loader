@@ -2,48 +2,36 @@ package loader
 
 /*
 #include <bfd.h>
-#include <stdbool.h>
-#include <stdio.h>
 #include <stdlib.h>
 
-asymbol** get_symtab_bfd(bfd *bfd_h, long *nsyms) {
-   long n;
-   asymbol **bfd_symtab;
+// The following functions are wrappers so we can use C macros
+// that are in bfd in our Go code.
 
-   bfd_symtab = NULL;
+long symtab_upper_bound_bfd(bfd *bfd_h) {
+   return bfd_get_symtab_upper_bound(bfd_h);
+}
 
-   n = bfd_get_symtab_upper_bound(bfd_h);
-   if (n < 0) {
-       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
-       return NULL;
-   } else if (n == 0) {
-       fprintf(stderr, "no symbol table\n");
-       return NULL;
-   }
+long canonicalize_symtab_bfd(bfd *bfd_h, asymbol **bfd_symtab) {
+   return bfd_canonicalize_symtab(bfd_h, bfd_symtab);
+}
 
-   bfd_symtab = (asymbol**)malloc(n);
-   if (!bfd_symtab) {
-       fprintf(stderr, "out of memory\n");
-       return NULL;
-   }
+long dynsym_upper_bound_bfd(bfd *bfd_h) {
+   return bfd_get_dynamic_symtab_upper_bound(bfd_h);
+}
 
-   *nsyms = bfd_canonicalize_symtab(bfd_h, bfd_symtab);
-   if (*nsyms < 0) {
-       fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
-       free(bfd_symtab);
-       return NULL;
-   }
-
-   return bfd_symtab;
+long canonicalize_dynsym_bfd(bfd *bfd_h, asymbol **bfd_dynsym) {
+   return bfd_canonicalize_dynamic_symtab(bfd_h, bfd_dynsym);
 }
 */
 import "C"
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
+// What the symbol represents; currently only functions.
 type SymbolType int
 
 const (
@@ -69,24 +57,86 @@ func (t SymbolType) GoString() string {
 	}
 }
 
+// Represents a symbol in an executable file.
 type Symbol struct {
 	Type SymbolType
 	Name string
 	Addr uint64
 }
 
+func (s Symbol) String() string {
+	return fmt.Sprintf("\t%-40s\t%#016x\t%s\t", s.Name, s.Addr, s.Type)
+}
+
 func loadSymbols(bfd *C.bfd, bin *Binary) error {
-	var nsyms C.long
-	bfdSymtab := C.get_symtab_bfd(bfd, &nsyms)
+	var n, nsyms C.long
+	var bfdSymtab **C.asymbol
+
+	n = C.symtab_upper_bound_bfd(bfd)
+	if n < 0 {
+		return fmt.Errorf("failed to read symtab: %s", bfdErrmsg())
+	}
+
+	if n == 0 {
+		// not an error, just no symbols
+		return nil
+	}
+
+	bfdSymtab = (**C.asymbol)(C.malloc(C.size_t(n)))
 	if bfdSymtab == nil {
-		return errors.New("could not process symbol table")
+		return errors.New("out of memory")
 	}
 	defer C.free(unsafe.Pointer(bfdSymtab))
+
+	nsyms = C.canonicalize_symtab_bfd(bfd, bfdSymtab)
+	if nsyms < 0 {
+		return fmt.Errorf("failed to read symtab: %s", bfdErrmsg())
+	}
 
 	// https://go.dev/wiki/cgo
 	symtab := unsafe.Slice(bfdSymtab, nsyms)
 
 	for _, s := range symtab {
+		if s.flags&C.BSF_FUNCTION == C.BSF_FUNCTION {
+			bin.Symbols = append(bin.Symbols, Symbol{
+				Type: SYM_TYPE_FUNC,
+				Name: C.GoString(s.name),
+				Addr: uint64(C.bfd_asymbol_value(s)),
+			})
+		}
+	}
+
+	return nil
+}
+
+func loadDynsym(bfd *C.bfd, bin *Binary) error {
+	var n, nsyms C.long
+	var bfdDynsym **C.asymbol
+
+	n = C.dynsym_upper_bound_bfd(bfd)
+	if n < 0 {
+		return fmt.Errorf("failed to read dynamic symtab: %s", bfdErrmsg())
+	}
+
+	if n == 0 {
+		// not an error, just no symbols
+		return nil
+	}
+
+	bfdDynsym = (**C.asymbol)(C.malloc(C.size_t(n)))
+	if bfdDynsym == nil {
+		return errors.New("out of memory")
+	}
+	defer C.free(unsafe.Pointer(bfdDynsym))
+
+	nsyms = C.canonicalize_dynsym_bfd(bfd, bfdDynsym)
+	if nsyms < 0 {
+		return fmt.Errorf("failed to read dynamic symtab: %s", bfdErrmsg())
+	}
+
+	dynsym := unsafe.Slice(bfdDynsym, nsyms)
+
+	for _, s := range dynsym {
 		if s.flags&C.BSF_FUNCTION == C.BSF_FUNCTION {
 			bin.Symbols = append(bin.Symbols, Symbol{
 				Type: SYM_TYPE_FUNC,
